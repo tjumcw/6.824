@@ -233,7 +233,7 @@ void* Raft::listen(void* arg){
 
 ### 3、选举细节
 
-![image-20220531152206887](C:\Users\mcw\AppData\Roaming\Typora\typora-user-images\image-20220531152206887.png)
+![image](https://user-images.githubusercontent.com/106053649/171131716-b5f664c7-8775-4376-a4db-a71abe51a8aa.png)
 
 ​							相信我，这张图会陪伴你很长时间的，LAB2A中可以重点关注两个RPC部分的细节
 
