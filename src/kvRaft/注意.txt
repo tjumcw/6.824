@@ -1,0 +1,1 @@
+在raft的processEntriesLoop()中，大锁保护了创建线程的代码
