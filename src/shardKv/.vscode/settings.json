@@ -1,0 +1,13 @@
+{
+    "files.associations": {
+        "*.cjson": "jsonc",
+        "*.wxss": "css",
+        "*.wxs": "javascript",
+        "mutex": "cpp",
+        "shared_mutex": "cpp",
+        "condition_variable": "cpp",
+        "iostream": "cpp",
+        "ostream": "cpp",
+        "chrono": "cpp"
+    }
+}
