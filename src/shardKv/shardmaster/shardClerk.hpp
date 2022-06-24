@@ -13,6 +13,12 @@ using namespace std;
 #define EVERY_SERVER_RAFT 5
 #define MASTER_PORT 6666
 
+/**
+ * @brief 代码基本结构类似LAB3的client.cpp，但是内容完全不一样了，实现的功能也差异较大
+ * 一些注释可以看LAB3的代码，许多辅助类的定义和功能都是一样的如select
+ */
+
+//写的打印config的函数，用于调试代码及测试程序效果
 void printConfig(Config config){
     cout<<"begin print -----------------------------------------------"<<endl;
     cout<<"configNum is "<<config.configNum<<endl;
@@ -34,13 +40,13 @@ void printConfig(Config config){
 
 class shardClerk{
 public:
-    static int cur_portId;
-    static locker port_lock;
-    void makeClerk(vector<vector<int>>& serverPorts);
-    void Join(unordered_map<int, vector<string>>& servers);
-    Config Query(int num);
-    void Leave(vector<int>& gIds);
-    void Move(int shard, int gId);
+    static int cur_portId;          //类似LAB3中的cur_portId，用于轮询对应server的端口(设置了多个端口监听相同请求)
+    static locker port_lock;        //但由于封装成了hpp(LAB4B需要类内复合)，没法直接用全局变量，那就用类的static变量
+    void makeClerk(vector<vector<int>>& serverPorts);           //初始化函数，不写成构造是因为需要在复合它的类中传递参数，不好调其构造函数
+    void Join(unordered_map<int, vector<string>>& servers);     //向客户端发起Join请求，加入新的集群(gid -> [servers])，需更新配置
+    Config Query(int num);                                      //向客户端发起Query请求，获取特定编号的config配置信息
+    void Leave(vector<int>& gIds);                              //向客户端发起Leave请求，移除特定的集群，需更新配置信息
+    void Move(int shard, int gId);                              //向客户端发起Move请求，将当前配置内有的gid做Move(必须有，没有的话用Join)，需更新配置
     int getCurRequestId();
     int getCurLeader();
     int getChangeLeader();
@@ -88,13 +94,13 @@ int shardClerk::getChangeLeader(){
 
 void shardClerk::Join(unordered_map<int, vector<string>>& servers){
     JoinArgs args;
-    args.getServersShardInfoFromMap(servers);
+    args.getServersShardInfoFromMap(servers);   //将map信息转化到类内的string中使得RPC能够正确传输
     args.requestId = getCurRequestId();
     args.clientId = clientId;
     int cur_leader = getCurLeader();
 
     port_lock.lock();
-    int curPort = (cur_portId++) % EVERY_SERVER_PORT;
+    int curPort = (cur_portId++) % EVERY_SERVER_PORT;       //取得server端监听相同请求的任一port，避免同一port排队处理过慢，其他类似不注释
     // printf("in %ld Join port is %d\n", pthread_self(), serverPorts[cur_leader][curPort]);
     port_lock.unlock();
 
@@ -138,26 +144,6 @@ Config shardClerk::Query(int num){
         cur_leader = getChangeLeader();
         usleep(100000);
     }   
-}
-
-vector<vector<int>> getMastersPort(int num){
-    vector<vector<int>> kvServerPort(num);
-    for(int i = 0; i < num; i++){
-        for(int j = 0; j < EVERY_SERVER_PORT; j++){
-            kvServerPort[i].push_back(MASTER_PORT + i + (j + 2) * num);
-        }
-    }
-    return kvServerPort;
-}
-
-vector<vector<int>> getMastersBehindPort(int num){
-    vector<vector<int>> kvServerPort(num);
-    for(int i = 0; i < num; i++){
-        for(int j = 0; j < EVERY_SERVER_PORT; j++){
-            kvServerPort[i].push_back(MASTER_PORT + i + (j + 2) * num + EVERY_SERVER_PORT * num);
-        }
-    }
-    return kvServerPort;
 }
 
 void shardClerk::Leave(vector<int>& gIds){
@@ -210,3 +196,26 @@ void shardClerk::Move(int shard, int gId){
     }   
 } 
 
+//获得用于管理分片的shardMaster的端口信息，但是是前面的端口。
+//为了后续LAB4B中server封装的shardClerk和普通发请求的clerk内的shardClerk获得不干扰的端口
+vector<vector<int>> getMastersPort(int num){
+    vector<vector<int>> kvServerPort(num);
+    for(int i = 0; i < num; i++){
+        for(int j = 0; j < EVERY_SERVER_PORT; j++){
+            kvServerPort[i].push_back(MASTER_PORT + i + (j + 2) * num);
+        }
+    }
+    return kvServerPort;
+}
+
+//获得用于管理分片的shardMaster的端口信息，但是是后面的端口。
+//为了后续LAB4B中server封装的shardClerk和普通发请求的clerk内的shardClerk获得不干扰的端口
+vector<vector<int>> getMastersBehindPort(int num){
+    vector<vector<int>> kvServerPort(num);
+    for(int i = 0; i < num; i++){
+        for(int j = 0; j < EVERY_SERVER_PORT; j++){
+            kvServerPort[i].push_back(MASTER_PORT + i + (j + 2) * num + EVERY_SERVER_PORT * num);
+        }
+    }
+    return kvServerPort;
+}

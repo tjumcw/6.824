@@ -1,5 +1,10 @@
 #include "common.h"
 
+/**
+ * @brief 用于测试各个args的转换逆转换函数以及实际负载均衡的效果，均OK
+ * 
+ */
+
 void testJOinArgs(){
     JoinArgs args;
     unordered_map<int, vector<string>> servers;

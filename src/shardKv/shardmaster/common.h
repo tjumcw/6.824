@@ -35,6 +35,7 @@ public:
 	}
 };
 
+//该RPC传不了map，故将map转为string传递，getServersShardInfoFromMap()就是转换函数
 void JoinArgs::getServersShardInfoFromMap(unordered_map<int, vector<string>> servers){
     serversShardInfo = "";
     for(const auto& ser : servers){
@@ -46,6 +47,7 @@ void JoinArgs::getServersShardInfoFromMap(unordered_map<int, vector<string>> ser
     }
 }
 
+//对应JoinArgs中str2map的逆转换函数
 unordered_map<int, vector<string>> getMapFromServersShardInfo(string serversShardInfo){
     unordered_map<int, vector<string>> myMap;
     vector<string> str;
@@ -103,6 +105,7 @@ public:
 	}
 };
 
+//该RPC传不了vector，故转为string
 void LeaveArgs::getGroupIdsInfoFromVector(vector<int>& gIds){
     groupIdsInfo = "";
     for(const auto& id : gIds){
@@ -110,6 +113,7 @@ void LeaveArgs::getGroupIdsInfoFromVector(vector<int>& gIds){
     }
 }
 
+//同样LeaveArgs的str2vec逆转换函数
 vector<int> GetVectorOfIntFromString(string groupIdsInfo){
     vector<int> gIds;
     string tmp = "";
@@ -148,10 +152,12 @@ public:
 	}
 };
 
+//该RPC虽然能传int，但为了operation类封装args时统一按照字符串处理，同样进行转换
 void MoveArgs::getStringOfShardAndGroupId(int shard, int gId){
     shardAndGroupIdInfo += to_string(shard) + ":" + to_string(gId) + ":";
 }
 
+//对应MoveArgs的逆转换函数
 vector<int> getShardAndGroupId(string shardAndGroupIdInfo){
     vector<int> ShardAndGroupId;
     string tmp = "";
@@ -173,6 +179,7 @@ public:
     bool isWrongLeader;
 };
 
+//不转换了，只用传一个int即可，to_string()一下就可以
 class QueryArgs{
 public:
     int configNum;
@@ -196,6 +203,7 @@ public:
 	}
 };
 
+//reply得着重处理，因为需要传config，里面有很多容器，RPC也没法传，需要转为对应的string
 string getStringFromConfig(Config config){
     string str;
     str += to_string(config.configNum) + "/";
@@ -214,6 +222,7 @@ string getStringFromConfig(Config config){
     return str;
 }
 
+//从reply对应的configStr恢复出config
 Config QueryReply::getConfig(){
     Config config;
     vector<string> str;

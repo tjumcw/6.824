@@ -19,8 +19,8 @@ class Master{
 public:
     static void* waitMapTask(void *arg);        //回收map的定时线程
     static void* waitReduceTask(void* arg);     //回收reduce的定时线程
-    static void* waitTime(void* arg);
-    Master(int mapNum = 8, int reduceNum = 8);
+    static void* waitTime(void* arg);           //用于定时的线程
+    Master(int mapNum = 8, int reduceNum = 8);  //带缺省值的有参构造，也可通过命令行传参指定，我偷懒少打两个数字直接放构造函数里
     void GetAllFile(char* file[], int index);   //从argv[]中获取待处理的文件名
     int getMapNum(){                            
         return m_mapNum;
@@ -35,8 +35,8 @@ public:
     void setReduceStat(int taskIndex);          //设置特定reduce任务完成的函数，RPC
     void waitMap(string filename);
     void waitReduce(int reduceIdx);
-    bool Done();
-    bool getFinalStat(){
+    bool Done();                                //判断reduce任务是否已经完成
+    bool getFinalStat(){                        //所有任务是否完成，实际上reduce完成就完成了，有点小重复
         return m_done;
     }
 private:
@@ -49,10 +49,10 @@ private:
     unordered_map<string, int> finishedMapTask; //存放所有完成的map任务对应的文件名
     unordered_map<int, int> finishedReduceTask; //存放所有完成的reduce任务对应的reduce编号
     vector<int> reduceIndex;                    //所有reduce任务的工作队列
-    vector<string> runningMapWork;              //正在处理的map任务，分配出去就加到这个队列，用于判断超时
+    vector<string> runningMapWork;              //正在处理的map任务，分配出去就加到这个队列，用于判断超时处理重发
     int curMapIndex;                            //当前处理第几个map任务
     int curReduceIndex;                         //当前处理第几个reduce任务
-    vector<int> runningReduceWork;              //正在处理的reduce任务，分配出去就加到这个队列，用于判断超时
+    vector<int> runningReduceWork;              //正在处理的reduce任务，分配出去就加到这个队列，用于判断超时处理重发
 };
 
 

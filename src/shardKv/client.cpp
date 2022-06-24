@@ -1,8 +1,14 @@
 #include "myClass.h"
 using namespace std;
 
-unordered_map<string, int> str2Port;
+/**
+ * @brief Clerk类封装有一个shardClerk，用于更新配置和获取配置信息，其本身有get、put、append的操作，相当于封装了
+ * 具有shard功能的一个kvClerk，理解成具有分片功能的LAB3的客户端类，也是类似其功能和框架，对照理解即可
+ */
 
+unordered_map<string, int> str2Port;    //一个用于通过server的名字获取其port的map
+
+//初始化str2Port，要在main函数构造Clerk前调用，才能再Clerk启动后正确得到端口
 void initStr2PortMap(int num){
     if(num >= 10 || num <= 0){
         exit(-1);
@@ -17,10 +23,12 @@ void initStr2PortMap(int num){
     }
 }
 
+//通过make_end可以使serverName -> port
 int make_end(string str){
     return str2Port[str];
 }
 
+//获取key到对应分片的hash函数
 int key2shard(string key){
     int shard = 0;
     if(key.size() > 0){
@@ -37,14 +45,17 @@ public:
     void put(string key, string value);
     void append(string key, string value);
     void putAppend(string key, string value, string op);
+
+    //--------------------用于测试时更新配置--------------------
     void Join(unordered_map<int, vector<string>>& servers) { masterClerk.Join(servers); }
     void Move(int shard, int gId) { masterClerk.Move(shard, gId); }
     void Leave(vector<int>& gIds) { masterClerk.Leave(gIds); }
     Config Query(int num) { return masterClerk.Query(num); }
+
 private:
-    shardClerk masterClerk;
-    Config config;
-    
+    shardClerk masterClerk;             
+    Config config;                          //用于获取配置，若找不到对应的gid就会通过Query()更新配置
+
     unordered_map<int, int> leaderId;
     int clientId;
     int requestId;
@@ -164,6 +175,7 @@ int main(){
     // }
     Clerk clerk(port);
 
+    //--------------------------------以下均为测试------------------------------
     Config config = clerk.Query(-1);
     printConfig(config);
     unordered_map<int, vector<string>> a = getJoinArgs(vector<int>{2});

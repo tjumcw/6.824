@@ -13,6 +13,14 @@ using namespace std;
 #define COMMOM_PORT 1234
 #define HEART_BEART_PERIOD 100000
 
+/**
+ * @brief 修改挺大的，注释过的不再注释了，看LAB2Braft.cpp的注释，增加了同kvServer应用层交互的代码，以及处理应用层快照的逻辑
+ * 新增了installSnapShotRPC，即在心跳中除了append分支还多了安装快照的分支，由于快照会截断日志，所以原先和日志长度、索引等有关的逻辑全得重新改
+ * 同时由于C++和go的差异，许多协程能实现的地方需要多很多同步信息，需要重新设置关于appendLoop中append和install的RPC端口信息以及对应客户端关系
+ * 直接看raft的类定义，里面对新增的函数及成员做了简单注释
+ */
+
+//新增的快照RPC需要传的参数，具体看论文section7关于日志压缩的内容
 class InstallSnapShotArgs{
 public:
     int term;
@@ -173,7 +181,7 @@ public:
     static void* processEntriesLoop(void* arg);
     static void* electionLoop(void* arg);
     static void* callRequestVote(void* arg);
-    static void* sendAppendEntries(void* arg);
+    static void* sendAppendEntries(void* arg);                         //向其他follower发送快照的函数，处理逻辑看论文
     static void* sendInstallSnapShot(void* arg);
     static void* applyLogLoop(void* arg);
 
@@ -184,19 +192,19 @@ public:
     pair<int, bool> getState();
     RequestVoteReply requestVote(RequestVoteArgs args);   
     AppendEntriesReply appendEntries(AppendEntriesArgs args);
-    InstallSnapSHotReply installSnapShot(InstallSnapShotArgs args);
+    InstallSnapSHotReply installSnapShot(InstallSnapShotArgs args);     //安装快照的RPChandler，处理逻辑看论文
     bool checkLogUptodate(int term, int index);
     void push_backLog(LogEntry log);
     vector<LogEntry> getCmdAndTerm(string text);
     StartRet start(Operation op);
     void printLogs();
-    void setSendSem(int num);
-    void setRecvSem(int num);
-    bool waitSendSem();
-    bool waitRecvSem();
-    bool postSendSem();
-    bool postRecvSem();
-    ApplyMsg getBackMsg();
+    void setSendSem(int num);           //初始化send的信号量，结合kvServer层的有名管道fifo模拟go的select及channel
+    void setRecvSem(int num);           //初始化recv的信号量，结合kvServer层的有名管道fifo模拟go的select及channel
+    bool waitSendSem();                 //信号量函数封装，用于类复合时kvServer的类外调用
+    bool waitRecvSem();                 //信号量函数封装，用于类复合时kvServer的类外调用
+    bool postSendSem();                 //信号量函数封装，用于类复合时kvServer的类外调用
+    bool postRecvSem();                 //信号量函数封装，用于类复合时kvServer的类外调用
+    ApplyMsg getBackMsg();              //取得一个msg，结合信号量和fifo模拟go的select及channel，每次只取一个，处理完再取
 
     void serialize();
     bool deserialize();
@@ -206,14 +214,14 @@ public:
     void kill();  
     void activate();
 
-    bool ExceedLogSize(int size);
-    void recvSnapShot(string snapShot, int lastIncludedIndex);
-    int idxToCompressLogPos(int index);
-    bool readSnapShot();
-    void saveSnapShot();
-    void installSnapShotTokvServer();
-    int lastIndex();
-    int lastTerm();
+    bool ExceedLogSize(int size);                               //超出日志大小则需要快照，kvServer层需要有个守护线程持续调用该函数判断
+    void recvSnapShot(string snapShot, int lastIncludedIndex);  //接受来自kvServer层的快照，用于持久化
+    int idxToCompressLogPos(int index);                         //获得原先索引在截断日志后的索引
+    bool readSnapShot();                                        //读取快照
+    void saveSnapShot();                                        //持久化快照
+    void installSnapShotTokvServer();                           //落后的raft向对应的应用层安装快照
+    int lastIndex();                                            //截断日志后的lastIndex
+    int lastTerm();                                             //截断日志后的lastTerm
 
 private:
     locker m_lock;
@@ -227,8 +235,8 @@ private:
     int m_curTerm;
     int m_votedFor;
     vector<LogEntry> m_logs;
-    int m_lastIncludedIndex;
-    int m_lastIncludedTerm;
+    int m_lastIncludedIndex;        //新增的持久化变量，存上次快照日志截断处的相关信息
+    int m_lastIncludedTerm;         //新增的持久化变量，存上次快照日志截断处的相关信息
 
     vector<int> m_nextIndex;
     vector<int> m_matchIndex;
@@ -249,13 +257,13 @@ private:
     struct timeval m_lastBroadcastTime;
 
     //用作与kvRaft交互
-    sem m_recvSem;
-    sem m_sendSem;
-    vector<ApplyMsg> m_msgs;
+    sem m_recvSem;                      //结合kvServer层的有名管道fifo模拟go的select及channel
+    sem m_sendSem;                      //结合kvServer层的有名管道fifo模拟go的select及channel
+    vector<ApplyMsg> m_msgs;            //在applyLogLoop中存msg的容易，每次存一条，处理完再存一条
 
-    bool installSnapShotFlag;
-    bool applyLogFlag;
-    unordered_set<int> isExistIndex;
+    // bool installSnapShotFlag;
+    // bool applyLogFlag;
+    unordered_set<int> isExistIndex;    //用于在processEntriesLoop中标识append和install端口对应分配情况
 };
 
 void Raft::Make(vector<PeersInfo> peers, int id){
@@ -571,7 +579,7 @@ void* Raft::processEntriesLoop(void* arg){
         int i = 0;
         for(auto& server : raft->m_peers){
             if(server.m_peerId == raft->m_peerId) continue;
-            if(raft->m_nextIndex[server.m_peerId] <= raft->m_lastIncludedIndex){
+            if(raft->m_nextIndex[server.m_peerId] <= raft->m_lastIncludedIndex){        //进入install分支的条件，日志落后于leader的快照
                 printf("%d send install rpc to %d, whose nextIdx is %d, but leader's lastincludeIdx is %d\n", 
                     raft->m_peerId, server.m_peerId, raft->m_nextIndex[server.m_peerId], raft->m_lastIncludedIndex);
                 server.isInstallFlag = true;
@@ -595,9 +603,9 @@ void* Raft::sendInstallSnapShot(void* arg){
     InstallSnapShotArgs args;
     int clientPeerId;
     raft->m_lock.lock();
-    for(int i = 0; i < raft->m_peers.size(); i++){
-        // printf("in install %d's server.isInstallFlag is %d\n", i, raft->m_peers[i].isInstallFlag ? 1 : 0);
-    }
+    // for(int i = 0; i < raft->m_peers.size(); i++){
+    //     printf("in install %d's server.isInstallFlag is %d\n", i, raft->m_peers[i].isInstallFlag ? 1 : 0);
+    // }
     for(int i = 0; i < raft->m_peers.size(); i++){
         if(raft->m_peers[i].m_peerId == raft->m_peerId){
             // printf("%d is leader, continue\n", i);

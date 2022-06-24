@@ -13,6 +13,8 @@ using namespace std;
 #define COMMOM_PORT 1234
 #define HEART_BEART_PERIOD 100000
 
+//需要结合LAB3实现应用层dataBase和Raft交互用的，通过getCmd()转化为applyMsg的command
+//实际上这只是LAB2的raft.hpp，在LAB3中改了很多，LAB4又改了不少，所以每个LAB都引了单独的raft.hpp
 class Operation{
 public:
     string getCmd();
@@ -28,6 +30,7 @@ string Operation::getCmd(){
     return cmd;
 }
 
+//通过传入raft.start()得到的返回值，封装成类
 class StartRet{
 public:
     StartRet():m_cmdIndex(-1), m_curTerm(-1), isLeader(false){}
@@ -36,18 +39,21 @@ public:
     bool isLeader;
 };
 
+//同应用层交互的需要提交到应用层并apply的封装成applyMsg的日志信息
 class ApplyMsg {
     bool CommandValid;
 	string command;
     int CommandIndex;
 };
 
+//一个存放当前raft的ID及自己两个RPC端口号的class(为了减轻负担，一个选举，一个日志同步，分开来)
 class PeersInfo{
 public:
     pair<int, int> m_port;
     int m_peerId;
 };
 
+//日志
 class LogEntry{
 public:
     LogEntry(string cmd = "", int term = -1):m_command(cmd),m_term(term){}
@@ -55,6 +61,7 @@ public:
     int m_term;
 };
 
+//持久化类，LAB2中需要持久化的内容就这3个，后续会修改
 class Persister{
 public:
     vector<LogEntry> logs;
@@ -88,8 +95,8 @@ class AppendEntriesReply{
 public:
     int m_term;
     bool m_success;
-    int m_conflict_term;
-    int m_conflict_index;
+    int m_conflict_term;        //用于冲突时日志快速匹配
+    int m_conflict_index;       //用于冲突时日志快速匹配
 };
 
 class RequestVoteArgs{
@@ -108,38 +115,38 @@ public:
 
 class Raft{
 public:
-    static void* listenForVote(void* arg);
-    static void* listenForAppend(void* arg);
-    static void* processEntriesLoop(void* arg);
-    static void* electionLoop(void* arg);
-    static void* callRequestVote(void* arg);
-    static void* sendAppendEntries(void* arg);
-    static void* applyLogLoop(void* arg);
+    static void* listenForVote(void* arg);          //用于监听voteRPC的server线程
+    static void* listenForAppend(void* arg);        //用于监听appendRPC的server线程
+    static void* processEntriesLoop(void* arg);     //持续处理日志同步的守护线程
+    static void* electionLoop(void* arg);           //持续处理选举的守护线程
+    static void* callRequestVote(void* arg);        //发voteRPC的线程
+    static void* sendAppendEntries(void* arg);      //发appendRPC的线程
+    static void* applyLogLoop(void* arg);           //持续向上层应用日志的守护线程
     // static void* apply(void* arg);
     // static void* save(void* arg);
-    enum RAFT_STATE {LEADER = 0, CANDIDATE, FOLLOWER};
-    void Make(vector<PeersInfo> peers, int id);
-    int getMyduration(timeval last);
-    void setBroadcastTime();
-    pair<int, bool> getState();
-    RequestVoteReply requestVote(RequestVoteArgs args);   
-    AppendEntriesReply appendEntries(AppendEntriesArgs args);
-    bool checkLogUptodate(int term, int index);
-    void push_backLog(LogEntry log);
-    vector<LogEntry> getCmdAndTerm(string text);
-    StartRet start(Operation op);
+    enum RAFT_STATE {LEADER = 0, CANDIDATE, FOLLOWER};          //用枚举定义的raft三种状态
+    void Make(vector<PeersInfo> peers, int id);                 //raft初始化
+    int getMyduration(timeval last);                            //传入某个特定计算到当下的持续时间
+    void setBroadcastTime();                                    //重新设定BroadcastTime，成为leader发心跳的时候需要重置
+    pair<int, bool> getState();                                 //在LAB3中会用到，提前留出来的接口判断是否leader
+    RequestVoteReply requestVote(RequestVoteArgs args);         //vote的RPChandler
+    AppendEntriesReply appendEntries(AppendEntriesArgs args);   //append的RPChandler
+    bool checkLogUptodate(int term, int index);                 //判断是否最新日志(两个准则)，vote时会用到
+    void push_backLog(LogEntry log);                            //插入新日志
+    vector<LogEntry> getCmdAndTerm(string text);                //用的RPC不支持传容器，所以封装成string，这个是解封装恢复函数
+    StartRet start(Operation op);                               //向raft传日志的函数，只有leader响应并立即返回，应用层用到
     void printLogs();
     
-    void serialize();
-    bool deserialize();
-    void saveRaftState();
-    void readRaftState();
+    void serialize();                               //序列化
+    bool deserialize();                             //反序列化
+    void saveRaftState();                           //持久化
+    void readRaftState();                           //读取持久化状态
     bool isKilled();  //->check is killed?
-    void kill();  
+    void kill();                                    //设定raft状态为dead，LAB3B快照测试时会用到
 
 private:
-    locker m_lock;
-    cond m_cond;
+    locker m_lock;                  //成员变量不一一注释了，基本在论文里都有，函数实现也不注释了，看过论文看过我写的函数说明
+    cond m_cond;                    //自然就能理解了，不然要写太多了，这样整洁一点，注释了太乱了，论文才是最关键的
     vector<PeersInfo> m_peers;
     Persister persister;
     int m_peerId;
@@ -239,6 +246,8 @@ int Raft::getMyduration(timeval last){
     return ((now.tv_sec - last.tv_sec) * 1000000 + (now.tv_usec - last.tv_usec));
 }   
 
+//稍微解释下-200000us是因为让记录的m_lastBroadcastTime变早，这样在appendLoop中getMyduration(m_lastBroadcastTime)直接达到要求
+//因为心跳周期是100000us
 void Raft::setBroadcastTime(){
     gettimeofday(&m_lastBroadcastTime, NULL);
     printf("before : %ld, %ld\n", m_lastBroadcastTime.tv_sec, m_lastBroadcastTime.tv_usec);
@@ -818,15 +827,15 @@ int main(int argc, char* argv[]){
     }
     int peersNum = atoi(argv[1]);
     if(peersNum % 2 == 0){
-        printf("the peersNum should be odd\n");
+        printf("the peersNum should be odd\n");  //必须传入奇数，这是raft集群的要求
         exit(-1);
     }
     srand((unsigned)time(NULL));
     vector<PeersInfo> peers(peersNum);
     for(int i = 0; i < peersNum; i++){
         peers[i].m_peerId = i;
-        peers[i].m_port.first = COMMOM_PORT + i;
-        peers[i].m_port.second = COMMOM_PORT + i + peers.size();
+        peers[i].m_port.first = COMMOM_PORT + i;                    //vote的RPC端口
+        peers[i].m_port.second = COMMOM_PORT + i + peers.size();    //append的RPC端口
         // printf(" id : %d port1 : %d, port2 : %d\n", peers[i].m_peerId, peers[i].m_port.first, peers[i].m_port.second);
     }
 
@@ -835,6 +844,7 @@ int main(int argc, char* argv[]){
         raft[i].Make(peers, i);
     }
 
+    //------------------------------test部分--------------------------
     usleep(400000);
     for(int i = 0; i < peers.size(); i++){
         if(raft[i].getState().second){
@@ -849,10 +859,10 @@ int main(int argc, char* argv[]){
     usleep(400000);
     for(int i = 0; i < peers.size(); i++){
         if(raft[i].getState().second){
-            raft[i].kill();
+            raft[i].kill();              //kill后选举及心跳的线程会宕机，会产生新的leader，很久之后了，因为上面传了1000条日志
             break;
         }
     }
-
+    //------------------------------test部分--------------------------
     while(1);
 }

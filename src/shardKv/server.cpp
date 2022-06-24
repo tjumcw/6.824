@@ -2,29 +2,10 @@
 #include <pthread.h>
 using namespace std;
 
-//-------------------------------用作之后的多RPC，即多个客户端同时请求，增加static的cur_port和lock即可，类似之前
-// class kvServerInfo{
-// public:
-//     PeersInfo peersInfo;
-//     vector<int> m_kvPort;
-// };
-// vector<vector<kvServerInfo>> getShardKvServerPort(int groupsNum){
-//     vector<vector<kvServerInfo>> peers(groupsNum, vector<kvServerInfo>(EVERY_SERVER_RAFT));
-//     for(int idx = 0; idx < groupsNum; idx++){
-//         for(int i = 0; i < EVERY_SERVER_RAFT; i++){
-//             peers[idx][i].peersInfo.m_peerId = i;
-//             peers[idx][i].peersInfo.m_port.first = COMMOM_PORT + i + idx * 100;
-//             peers[idx][i].peersInfo.m_port.second = COMMOM_PORT + i + EVERY_SERVER_RAFT + idx * 100;
-//             peers[idx][i].peersInfo.isInstallFlag = false;
-//             for(int j = 0; j < EVERY_SERVER_PORT; j++){
-//                 peers[idx][i].m_kvPort.push_back(COMMOM_PORT + i + (j + 2) * EVERY_SERVER_RAFT  + idx * 100);
-//             }
-//             // printf(" id : %d port1 : %d, port2 : %d\n", peers[i].m_peerId, peers[i].m_port.first, peers[i].m_port.second);
-//         }
-//     }
-//     return peers;
-// }
-//-------------------------------用作之后的多RPC，即多个客户端同时请求，增加static的cur_port和lock即可，类似之前
+/**
+ * @brief 注释太多了，写起来太乱了，需要理解整个流程。建议先看我写的LAB4B的md文件，在看代码就能看得懂了
+ * 
+ */
 
 vector<PeersInfo> getRaftPort(vector<kvServerInfo>& kvInfo){
     int n = kvInfo.size();
@@ -55,6 +36,7 @@ int make_end(string str){
     return str2Port[str];
 }
 
+//从特定格式的string获得其对应的config，因为RPC不能传config
 Config getConfig(string configStr){
     Config config;
     vector<string> str;
@@ -90,6 +72,7 @@ int key2shard(string key){
     return shard;
 }
 
+//按op拆分字符串的函数，经常用到
 vector<string> splitStr(string str, char op){
     vector<string> ret;
     string tmp = "";
@@ -107,6 +90,7 @@ vector<string> splitStr(string str, char op){
     return ret;
 }
 
+//将数据迁移的RPC应答封装成string格式
 string MigrateReply2Str(MigrateReply reply){
     string str;
     str += to_string(reply.configNum) + "|" + to_string(reply.shard) + "|" + reply.err + "|";
@@ -127,6 +111,7 @@ string MigrateReply2Str(MigrateReply reply){
     return str;
 }
 
+//将RPC应答收到的string逆转换为正确的reply格式
 MigrateReply str2MigrateReply(string str){
     MigrateReply reply;
     vector<string> content;

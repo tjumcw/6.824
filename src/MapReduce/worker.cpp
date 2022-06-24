@@ -25,7 +25,7 @@ using namespace std;
 int disabledMapId = 0;   //用于人为让特定map任务超时的Id
 int disabledReduceId = 0;   //用于人为让特定reduce任务超时的Id
 
-//定义master分配给自己的map和reduce任务数
+//定义master分配给自己的map和reduce任务数，实际无所谓随意创建几个，我是为了更方便测试代码是否ok
 int map_task_num;
 int reduce_task_num;
 
@@ -44,8 +44,7 @@ typedef vector<string> (*ReduceFunc)(vector<KeyValue> kvs, int reduceTaskIdx);
 MapFunc mapF;
 ReduceFunc reduceF;
 
-//给每个map线程分配的任务ID，用于写中间文件时的命名，不能直接用runningMapId中的数字，
-//如果map任务数小于文件数,一个map任务处理多个文件,其mapTaskIdx一致但runningMapId存的fileId自增,不能用于标识中间文件对应的map任务
+//给每个map线程分配的任务ID，用于写中间文件时的命名
 int MapId = 0;            
 pthread_mutex_t map_mutex;
 pthread_cond_t cond;
@@ -223,10 +222,14 @@ void* mapWorker(void* arg){
             pthread_cond_broadcast(&cond);
             return NULL;
         }
-        string taskTmp = client.call<string>("assignTask").val();
+        string taskTmp = client.call<string>("assignTask").val();   //通过RPC返回值取得任务，在map中即为文件名
         if(taskTmp == "empty") continue; 
         printf("%d get the task : %s\n", mapTaskIdx, taskTmp.c_str());
         pthread_mutex_lock(&map_mutex);
+
+        //------------------------自己写的测试超时重转发的部分---------------------
+        //注：需要对应master所规定的map数量，因为是1，3，5被置为disabled，相当于第2，4，6个拿到任务的线程宕机
+        //若只分配两个map的worker，即0工作，1宕机，我设的超时时间比较长且是一个任务拿完在拿一个任务，所有1的任务超时后都会给到0，
         if(disabledMapId == 1 || disabledMapId == 3 || disabledMapId == 5){
             disabledMapId++;
             pthread_mutex_unlock(&map_mutex);
@@ -238,6 +241,8 @@ void* mapWorker(void* arg){
             disabledMapId++;   
         }
         pthread_mutex_unlock(&map_mutex);
+        //------------------------自己写的测试超时重转发的部分---------------------
+
     //3、拆分任务，任务返回为文件path及map任务编号，将filename及content封装到kv的key及value中
         char task[taskTmp.size() + 1];
         strcpy(task, taskTmp.c_str());
@@ -329,7 +334,7 @@ int main(){
     pthread_mutex_init(&map_mutex, NULL);
     pthread_cond_init(&cond, NULL);
 
-    //加载map及reduce函数
+    //运行时从动态库中加载map及reduce函数(根据实际需要的功能加载对应的Func)
     void* handle = dlopen("./libmrFunc.so", RTLD_LAZY);
     if (!handle) {
         cerr << "Cannot open library: " << dlerror() << '\n';
@@ -354,8 +359,8 @@ int main(){
     work_client.set_timeout(5000);
     map_task_num = work_client.call<int>("getMapNum").val();
     reduce_task_num = work_client.call<int>("getReduceNum").val();
-    removeFiles();
-    removeOutputFiles();
+    removeFiles();          //若有，则清理上次输出的中间文件
+    removeOutputFiles();    //清理上次输出的最终文件
 
     //创建多个map及reduce的worker线程
     pthread_t tidMap[map_task_num];
@@ -377,6 +382,8 @@ int main(){
         }
         sleep(1);
     }
+
+    //任务完成后清理中间文件，关闭打开的动态库，释放资源
     removeFiles();
     dlclose(handle);
     pthread_mutex_destroy(&map_mutex);

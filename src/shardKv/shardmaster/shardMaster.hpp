@@ -16,6 +16,12 @@ typedef std::chrono::steady_clock myClock;
 typedef std::chrono::steady_clock::time_point myTime;
 #define  myDuration std::chrono::duration_cast<std::chrono::microseconds>
 
+/**
+ * @brief 整体框架类似LAB3中的server端代码，但内容完全不一样了，需要先理解整个shard分配的流程再对照LAB3就很好处理了
+ * 一些注释可以看LAB3的代码，许多辅助类的定义和功能都是一样的如select
+ */
+
+//打印config函数，便于调试
 void printConfig(Config config){
     cout<<"begin print -----------------------------------------------"<<endl;
     cout<<"configNum is "<<config.configNum<<endl;
@@ -41,6 +47,7 @@ public:
     vector<int> m_kvPort;
 };
 
+//从给的kvserverInfo中获得对应raft端口信息的PeersInfo
 vector<PeersInfo> getRaftPort(vector<kvServerInfo>& kvInfo){
     int n = kvInfo.size();
     vector<PeersInfo> ret(n);
@@ -106,9 +113,9 @@ public:
     LeaveReply Leave(LeaveArgs args);
     MoveReply Move(MoveArgs args);
     QueryReply Query(QueryArgs args);
-    bool JoinLeaveMoveRpcHandler(Operation operation);
-    void doJoinLeaveMove(Operation operation);
-    void balanceWorkLoad(Config& config);
+    bool JoinLeaveMoveRpcHandler(Operation operation);      //将更改配置的操作抽象成一个RPC处理函数，因为处理流程几乎一致，只需知道完没完成即可
+    void doJoinLeaveMove(Operation operation);              //通过start传入raft共识后再applyLoop中得到的msg还原到operation:Join，Leave，Move进入对应的处理函数
+    void balanceWorkLoad(Config& config);                   //对Join和Leave的操作都要进行负载均衡，通过map及2个优先队列实现
     int getConfigsSize();
 
 private:
@@ -321,14 +328,14 @@ void ShardMaster::doJoinLeaveMove(Operation operation){
 
     if(operation.op == "Join"){
         unordered_map<int, vector<string>> newGroups = getMapFromServersShardInfo(operation.args);
-        for(const auto& group : newGroups){
+        for(const auto& group : newGroups){             //加入新config的groups中(gid -> [servers])
             config.groups[group.first] = group.second;
         }
-        if(config.groups.empty()){    //说明此前必然是空的,args也是空的，直接return
+        if(config.groups.empty()){                      //说明此前必然是空的,args也是空的，直接return
             return;
         }
-        balanceWorkLoad(config);
-        configs.push_back(config);
+        balanceWorkLoad(config);                        //进行负载均衡
+        configs.push_back(config);                      //将最新配置插入configs数组
         return;
     }
     if(operation.op == "Leave"){
@@ -352,7 +359,7 @@ void ShardMaster::doJoinLeaveMove(Operation operation){
         configs.push_back(config);
         return;
     }
-    if(operation.op == "Move"){
+    if(operation.op == "Move"){         //Move不做负载均衡，那只会破坏Move的语义
         vector<int> moveInfo = getShardAndGroupId(operation.args);
         config.shards[moveInfo[0]] = moveInfo[1];
         // printConfig(config);
@@ -423,6 +430,7 @@ void* ShardMaster::applyLoop(void* arg){
     }
 }
 
+//自己定义的优先队列的两种排序方式
 class mycmpLower{
 public:
     bool operator()(const pair<int, vector<int>>& a, const pair<int, vector<int>>& b){
@@ -437,9 +445,11 @@ public:
     }
 };
 
+//太长了typedef一下
 typedef priority_queue<pair<int, vector<int>>, vector<pair<int, vector<int>>>, mycmpLower> lowSizeQueue;
 typedef priority_queue<pair<int, vector<int>>, vector<pair<int, vector<int>>>, mycmpUpper> upSizeQueue;
 
+//更新lower排序方式的优先队列，需要全清再按照当前的负载情况workLoad进行插值，下面的upper类似
 void syncLowerLoadSize(unordered_map<int, vector<int>>& workLoad, lowSizeQueue& lowerLoadSize){
     while(!lowerLoadSize.empty()){
         lowerLoadSize.pop();
@@ -458,15 +468,17 @@ void syncUpperLoadSize(unordered_map<int, vector<int>>& workLoad, upSizeQueue& u
     }
 }
 
+//负载均衡实现，自己写的可能不是很高效，用了两个优先队列不断更新，主要思想就是把负载最大的拿出来给负载最小的，同时更新workLoad
+//再将两个优先队列继续按照workLoad更新，迭代直到满足负载全相等或最大差一
 void ShardMaster::balanceWorkLoad(Config& config){
     lowSizeQueue lowerLoadSize;
     unordered_map<int, vector<int>> workLoad;
     for(const auto& group : config.groups){
-        workLoad[group.first] = vector<int>{};
+        workLoad[group.first] = vector<int>{};          //先记录下总共有哪些gid(注意：leave去除了gid，把对应的shard置0)
     }
-    for(int i = 0; i < config.shards.size(); i++){
+    for(int i = 0; i < config.shards.size(); i++){      //先把为0的部分分配给最小的负载，其实相当于就是再处理move和初始化的join(一开始都为0)
         if(config.shards[i] != 0){
-            workLoad[config.shards[i]].push_back(i);
+            workLoad[config.shards[i]].push_back(i);    //对应gid负责的分片都push_back到value中，用size表示对应gid的负载
         }
     }
     syncLowerLoadSize(workLoad, lowerLoadSize);
@@ -479,9 +491,10 @@ void ShardMaster::balanceWorkLoad(Config& config){
             lowerLoadSize.push(load);
         }
     }
+    //如果没有为0的，就不断找到负载最大给分给最小的即可
     upSizeQueue upperLoadSize;
     syncUpperLoadSize(workLoad, upperLoadSize);
-    if(NShards % config.groups.size() == 0){
+    if(NShards % config.groups.size() == 0){        //根据是否正好取模分为所有gid的shards数量相同或者最大最小只差1两种情况
         while(lowerLoadSize.top().second.size() != upperLoadSize.top().second.size()){
             workLoad[lowerLoadSize.top().first].push_back(upperLoadSize.top().second.back());
             workLoad[upperLoadSize.top().first].pop_back();
@@ -496,6 +509,7 @@ void ShardMaster::balanceWorkLoad(Config& config){
             syncUpperLoadSize(workLoad, upperLoadSize);
         }
     }
+    //传入的是config的引用，按照最终的workLoad更新传入config的shards
     for(const auto& load : workLoad){
         for(const auto& idx : load.second){
             config.shards[idx] = load.first;

@@ -17,6 +17,11 @@ using namespace std;
 #define COMMOM_PORT 1234
 #define HEART_BEART_PERIOD 100000
 
+/**
+ * @brief 看LAB2,3的raft注释，基本都一样，只是在LAB3的基础上小小修改了operation及applyMsg的内容
+ * 
+ */
+
 class InstallSnapShotArgs{
 public:
     int term;
