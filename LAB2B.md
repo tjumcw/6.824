@@ -148,7 +148,7 @@
 
 - matchIndex也是leader维护并不断更新的一个数组，表示各个raft实例实际同步的日志条目的索引。
 
-![image-20220612000544699](C:\Users\mcw\AppData\Roaming\Typora\typora-user-images\image-20220612000544699.png)
+![image](https://user-images.githubusercontent.com/106053649/175804800-67b850a1-0722-487b-8ab4-ff6611f6cae1.png)
 
 - 注意上图条件：
   - 需要找到1个N，使得满足所有raft中的已匹配的日志条目索引>=N,并且N > leader自己的已提交条目索引commitIndex
