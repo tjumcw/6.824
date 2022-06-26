@@ -25,7 +25,7 @@
 - 可以看的资料
   - [6.824 Lab 3: Fault-tolerant Key/Value Service (mit.edu)](http://nil.csail.mit.edu/6.824/2020/labs/lab-kvraft.html)官方文档
   - raft论文Section7
-  - ![image-20220625191856279](C:\Users\mcw\AppData\Roaming\Typora\typora-user-images\image-20220625191856279.png)
+  - ![image](https://user-images.githubusercontent.com/106053649/175804871-a8459b9e-7cf2-4011-99b6-3242c9d369ba.png)
   - 对照上图进行RPC设计，其中offset以及done参数暂且不考虑
 - kvServer需要做的工作
   - 取得快照的函数实现
