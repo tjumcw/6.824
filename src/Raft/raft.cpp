@@ -585,7 +585,7 @@ void* Raft::sendAppendEntries(void* arg){
             if(leader_conflict_index != -1){
                 raft->m_nextIndex[clientPeerId] = leader_conflict_index + 1;
             }else{
-                raft->m_nextIndex[clientPeerId] = reply.m_conflict_term;
+                raft->m_nextIndex[clientPeerId] = reply.m_conflict_index;
             }
         }else{
             raft->m_nextIndex[clientPeerId] = reply.m_conflict_index + 1;
