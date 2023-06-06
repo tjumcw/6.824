@@ -7,7 +7,9 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <string.h>
+#include <sys/epoll.h>
 #include "locker.h"
+#include "timer.h"
 #include "./buttonrpc-master/buttonrpc.hpp"
 #include <bits/stdc++.h>
 using namespace std;
@@ -20,6 +22,7 @@ public:
     static void* waitMapTask(void *arg);        //回收map的定时线程
     static void* waitReduceTask(void* arg);     //回收reduce的定时线程
     static void* waitTime(void* arg);           //用于定时的线程
+    static void* dispatch(void *args);                 // epoll线程执行的定时器监听函数
     Master(int mapNum = 8, int reduceNum = 8);  //带缺省值的有参构造，也可通过命令行传参指定，我偷懒少打两个数字直接放构造函数里
     void GetAllFile(char* file[], int index);   //从argv[]中获取待处理的文件名
     int getMapNum(){                            
@@ -53,10 +56,13 @@ private:
     int curMapIndex;                            //当前处理第几个map任务
     int curReduceIndex;                         //当前处理第几个reduce任务
     vector<int> runningReduceWork;              //正在处理的reduce任务，分配出去就加到这个队列，用于判断超时处理重发
+    TimerWheel m_timeWheel;                    // 时间轮定时器
+    int m_epollfd;                              // epoll事件监听描述符，用于定时器监听
+    pthread_t m_epollThread;                    // epoll监听线程
 };
 
 
-Master::Master(int mapNum, int reduceNum):m_done(false), m_mapNum(mapNum), m_reduceNum(reduceNum){
+Master::Master(int mapNum, int reduceNum):m_done(false), m_mapNum(mapNum), m_reduceNum(reduceNum), m_timeWheel(1000){
     m_list.clear();
     finishedMapTask.clear();
     finishedReduceTask.clear();
@@ -70,6 +76,8 @@ Master::Master(int mapNum, int reduceNum):m_done(false), m_mapNum(mapNum), m_red
     for(int i = 0; i < reduceNum; i++){
         reduceIndex.emplace_back(i);
     }
+    m_epollfd = epoll_create1(EPOLL_CLOEXEC);
+    pthread_create(&m_epollThread, NULL, dispatch, this);
 }
 
 void Master::GetAllFile(char* file[], int argc){
@@ -96,12 +104,6 @@ string Master::assignTask(){
 
 void* Master::waitMapTask(void* arg){
     Master* map = (Master*)arg;
-    // printf("wait maphash is %p\n", &map->master->finishedMapTask);
-    void* status;
-    pthread_t tid;
-    char op = 'm';
-    pthread_create(&tid, NULL, waitTime, &op);
-    pthread_join(tid, &status);  //join方式回收实现超时后解除阻塞
     map->m_assign_lock.lock();
     //若超时后在对应的hashmap中没有该map任务完成的记录，重新将该任务加入工作队列
     if(!map->finishedMapTask.count(map->runningMapWork[map->curMapIndex])){
@@ -124,9 +126,7 @@ void Master::waitMap(string filename){
     m_assign_lock.lock();
     runningMapWork.push_back(string(filename));  //将分配出去的map任务加入正在运行的工作队列
     m_assign_lock.unlock();
-    pthread_t tid;
-    pthread_create(&tid, NULL, waitMapTask, this); //创建一个用于回收计时线程及处理超时逻辑的线程
-    pthread_detach(tid);
+    m_timeWheel.addTimer(MAP_TASK_TIMEOUT * 1000, std::bind(waitMapTask, this)); // 创建一个定时器用于回收计时线程及处理超时逻辑的线程
 }
 
 //分map任务还是reduce任务进行不同时间计时的计时线程
@@ -141,11 +141,6 @@ void* Master::waitTime(void* arg){
 
 void* Master::waitReduceTask(void* arg){
     Master* reduce = (Master*)arg;
-    void* status;
-    pthread_t tid;
-    char op = 'r';
-    pthread_create(&tid, NULL, waitTime, &op);
-    pthread_join(tid, &status);
     reduce->m_assign_lock.lock();
     //若超时后在对应的hashmap中没有该reduce任务完成的记录，将该任务重新加入工作队列
     if(!reduce->finishedReduceTask.count(reduce->runningReduceWork[reduce->curReduceIndex])){
@@ -166,9 +161,7 @@ void Master::waitReduce(int reduceIdx){
     m_assign_lock.lock();
     runningReduceWork.push_back(reduceIdx); //将分配出去的reduce任务加入正在运行的工作队列
     m_assign_lock.unlock();
-    pthread_t tid;
-    pthread_create(&tid, NULL, waitReduceTask, this); //创建一个用于回收计时线程及处理超时逻辑的线程
-    pthread_detach(tid);
+    m_timeWheel.addTimer(REDUCE_TASK_TIMEOUT * 1000, std::bind(waitReduceTask, this));
 }
 
 void Master::setMapStat(string filename){
@@ -216,6 +209,18 @@ bool Master::Done(){
     int len = finishedReduceTask.size(); //reduce的hashmap若是达到reduceNum，reduce任务及总任务完成
     m_assign_lock.unlock();
     return len == m_reduceNum;
+}
+
+
+void* Master::dispatch(void *args) {
+    Master* master = (Master*)args;
+    epoll_event event[5]; 
+    static const int MAXEVENT = 10000;
+    while (!master->Done()) {
+        epoll_wait(master->m_epollfd, event, MAXEVENT, 1);
+        master->m_timeWheel.takeAllTimeout();
+    }
+    return nullptr;
 }
 
 int main(int argc, char* argv[]){
