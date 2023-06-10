@@ -863,7 +863,7 @@ void* Raft::sendAppendEntries(void* arg){
             if(leader_conflict_index != -1){
                 raft->m_nextIndex[clientPeerId] = leader_conflict_index + 1;
             }else{
-                raft->m_nextIndex[clientPeerId] = reply.m_conflict_index;; //这里加不加1都可，无非是多一位还是少一位，此处指follower对应index为空
+                raft->m_nextIndex[clientPeerId] = reply.m_conflict_index; //这里加不加1都可，无非是多一位还是少一位，此处指follower对应index为空
             }
         }else{
             if(reply.m_conflict_term == -100){
